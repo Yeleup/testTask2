@@ -1,4 +1,7 @@
 doctrine:
+    dbal:
+        # configure these for your database server
+        url: '%env(resolve:DATABASE_URL)%'
     orm:
         auto_generate_proxy_classes: false
         metadata_cache_driver:
