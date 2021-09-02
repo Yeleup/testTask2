@@ -11,7 +11,6 @@ use EasyCorp\Bundle\EasyAdminBundle\Controller\AbstractCrudController;
 use EasyCorp\Bundle\EasyAdminBundle\Field\IdField;
 use EasyCorp\Bundle\EasyAdminBundle\Field\TextEditorField;
 use EasyCorp\Bundle\EasyAdminBundle\Field\TextField;
-use http\Env\Request;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DomCrawler\Crawler;
 use Symfony\Component\HttpClient\HttpClient;
@@ -54,82 +53,68 @@ class NewsCrudController extends AbstractCrudController
 
     public function updateNews(AdminContext $context)
     {
-        $em = $this->getDoctrine()->getManager();
-
         $client = HttpClient::create();
 
         $response = $client->request('GET', 'http://static.feed.rbc.ru/rbc/logical/footer/news.rss');
 
-        $request = \Symfony\Component\HttpFoundation\Request::createFromGlobals();
+        if ($response->getStatusCode() == '200') {
+            $crawler = new Crawler();
 
-        $crawler = new Crawler();
-        $crawler->addXmlContent($response->getContent());
+            $crawler->addXmlContent($response->getContent());
 
-        $news = $crawler->filterXPath('//rss/channel/item');
+            $news = $crawler->filterXPath('//rss/channel/item')->each(function ($domElement) {
+                if ($domElement->filter('link')->count()) {
+                    $link = $domElement->filter('link')->text();
+                }
 
-        foreach ($news as $item) {
-            $domElement = new Crawler($item);
+                if ($domElement->filter('title')->count()) {
+                    $title = $domElement->filter('title')->text();
+                }
 
-            $news = new News;
+                $description = '';
+                if ($domElement->filter('description')->count()) {
+                    $description = $domElement->filter('description')->text();
+                }
 
-            if ($domElement->filter('link')->count()) {
-                $element = $this->getDoctrine()->getManager()->getRepository(News::class)->findBy(['link' => $domElement->filter('link')->text()]);
-            } else {
-                continue;
-            }
+                $author = '';
+                if ($domElement->filter('author')->count()) {
+                    $author = $domElement->filter('author')->text();
+                }
 
-            if (!$element) {
-                try {
-                    if ($domElement->filter('title')->count()) {
-                        $news->setTitle($domElement->filter('title')->text());
-                    }
+                if ($domElement->filter('pubDate')->count()) {
+                    $pubDate = new \DateTime($domElement->filter('pubDate')->text());
+                } else {
+                    $pubDate = new \DateTime('now');
+                }
 
-                    if ($domElement->filter('title')->count()) {
-                        $news->setDescription($domElement->filter('description')->text());
-                    }
+                $image = '';
+                if ($domElement->filter('enclosure')->count()) {
+                    $image = $domElement->filter('enclosure')->attr('url');
+                }
+                return compact('link','title','description', 'author', 'pubDate', 'image');
+            });
 
-                    if ($domElement->filter('link')->count()) {
-                        $news->setLink($domElement->filter('link')->text());
-                    }
+            $em = $this->getDoctrine()->getManager();
 
+            foreach ($news as $item) {
+                $element = $this->getDoctrine()->getManager()->getRepository(News::class)->findBy(['link' => $item['link']]);
 
-                    if ($domElement->filter('author')->count()) {
-                        $news->setAuthor($domElement->filter('author')->text());
-                    }
-
-                    if ($domElement->filter('pubDate')->count()) {
-                        $pubDate = new \DateTime($domElement->filter('pubDate')->text());
-                        $news->setPubDate($pubDate);
-                    } else {
-                        $pubDate = new \DateTime('now');
-                        $news->setPubDate($pubDate);
-                    }
-
-                    if ($domElement->filter('enclosure')->count()) {
-                        $news->setImage($domElement->filter('enclosure')->attr('url'));
-                    }
+                if (!$element) {
+                    $news = new News;
+                    $news->setTitle($item['title']);
+                    $news->setDescription($item['description']);
+                    $news->setLink($item['link']);
+                    $news->setAuthor($item['author']);
+                    $news->setPubDate($item['pubDate']);
+                    $news->setImage($item['image']);
 
                     $em->persist($news);
                     $em->flush($news);
-                } catch (\Exception $e) {
-                    $this->logger->critical('News updated cancel', [
-                        'requestedMethod' => $request->getMethod(),
-                        'requestUrl' => $request->getRequestUri(),
-                        'responseCode' => $e->getCode(),
-                        'responseBody' => $e->getMessage(),
-                    ]);
                 }
             }
         }
 
         $this->addFlash('success', 'News updated!');
-
-        $this->logger->info('News updated', [
-            'requestedMethod' => $request->getMethod(),
-            'requestUrl' => $request->getRequestUri(),
-            'responseCode' => $response->getStatusCode(),
-            'responseBody' => $response->getContent(),
-        ]);
 
         return $this->redirect($context->getReferrer());
     }
