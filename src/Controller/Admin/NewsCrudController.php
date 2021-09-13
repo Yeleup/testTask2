@@ -9,11 +9,14 @@ use EasyCorp\Bundle\EasyAdminBundle\Config\Crud;
 use EasyCorp\Bundle\EasyAdminBundle\Context\AdminContext;
 use EasyCorp\Bundle\EasyAdminBundle\Controller\AbstractCrudController;
 use EasyCorp\Bundle\EasyAdminBundle\Field\IdField;
+use EasyCorp\Bundle\EasyAdminBundle\Field\ImageField;
 use EasyCorp\Bundle\EasyAdminBundle\Field\TextEditorField;
 use EasyCorp\Bundle\EasyAdminBundle\Field\TextField;
+use Symfony\Component\Filesystem\Filesystem;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DomCrawler\Crawler;
 use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 class NewsCrudController extends AbstractCrudController
 {
@@ -44,20 +47,28 @@ class NewsCrudController extends AbstractCrudController
 
     public function configureFields(string $pageName): iterable
     {
+        $image = ImageField::new('image')->setBasePath('uploads/images/news')->hideOnForm();
+
+        $imageFile = ImageField::new('image')
+            ->setUploadedFileNamePattern('[name]-[timestamp].[extension]')
+            ->setUploadDir('public/uploads/images/news')->onlyOnForms();
+
+
         return [
-            IdField::new('id'),
             TextField::new('title'),
+            $image,
+            $imageFile,
             TextEditorField::new('description'),
         ];
     }
 
-    public function updateNews(AdminContext $context)
+    public function updateNews(AdminContext $context, HttpClientInterface $client)
     {
-        $client = HttpClient::create();
+        $filesystem = new Filesystem();
 
         $response = $client->request('GET', 'http://static.feed.rbc.ru/rbc/logical/footer/news.rss');
 
-        if ($response->getStatusCode() == '200') {
+        if ($response->getStatusCode() == 200) {
             $crawler = new Crawler();
 
             $crawler->addXmlContent($response->getContent());
@@ -106,7 +117,22 @@ class NewsCrudController extends AbstractCrudController
                     $news->setLink($item['link']);
                     $news->setAuthor($item['author']);
                     $news->setPubDate($item['pubDate']);
-                    $news->setImage($item['image']);
+
+                    // Get images
+                    $basename = basename($item['image']);
+
+                    try {
+                        $download = $client->request(
+                            'GET',
+                            $item['image']
+                        );
+
+                        if ($download->getStatusCode() == 200) {
+                            $filesystem->dumpFile('uploads/images/news/' . $basename, $download->getContent());
+                        }
+
+                        $news->setImage($basename);
+                    } catch (\Exception $e) {}
 
                     $em->persist($news);
                     $em->flush($news);
